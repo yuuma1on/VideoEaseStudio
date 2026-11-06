@@ -1,0 +1,42 @@
+name: Build and publish VideoEase Studio
+on:
+  push:
+    tags:
+      - 'v*'
+permissions:
+  contents: write
+jobs:
+  release:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Check tag and source version
+        shell: pwsh
+        run: |
+          $version = (python -c "import updater; print(updater.VERSION)").Trim()
+          if ("v$version" -ne "${{ github.ref_name }}") { throw "Tag/version mismatch" }
+      - name: Build Windows executables
+        shell: pwsh
+        run: |
+          python -m pip install pyinstaller
+          python -m PyInstaller --noconfirm --clean --onefile --windowed --name VideoEaseStudio videoease.py
+          python -m PyInstaller --noconfirm --clean --onefile --windowed --name VideoEaseUpdater apply_update.py
+          Copy-Item update_config.json dist/update_config.json
+      - name: Create ZIP and SHA256
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force release/VideoEaseStudio | Out-Null
+          Copy-Item dist/VideoEaseStudio.exe,dist/VideoEaseUpdater.exe,dist/update_config.json release/VideoEaseStudio/
+          $name = "VideoEaseStudio-${{ github.ref_name }}.zip"
+          Compress-Archive -Path release/VideoEaseStudio -DestinationPath $name
+          (Get-FileHash $name -Algorithm SHA256).Hash.ToLowerInvariant() | Set-Content -NoNewline -Encoding ascii "$name.sha256"
+      - name: Publish release assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: pwsh
+        run: |
+          $name = "VideoEaseStudio-${{ github.ref_name }}.zip"
+          gh release create "${{ github.ref_name }}" "$name" "$name.sha256" --title "VideoEase Studio ${{ github.ref_name }}" --notes "Windows EXE update" --latest
